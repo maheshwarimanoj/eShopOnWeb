@@ -1,0 +1,691 @@
+openapi: 3.0.3
+info:
+  title: Risk Clearance Domain API
+  version: 1.0.0
+  description: Search and retrieve risk clearance data across providers (risk clearance domain)
+
+servers:
+  - url: https://api.example.com/v1
+
+tags:
+  - name: Risks
+
+paths:
+  /risks:
+    post:
+      tags: [Risks]
+      summary: Search for risk clearance data
+      operationId: searchRisks
+      parameters:
+        - name: X-Entity
+          in: header
+          required: true
+          schema: { type: string }
+          description: Entity identifier for the request
+          example: "MRSI"
+        - name: X-Product
+          in: header
+          required: true
+          schema: { type: string }
+          description: Product identifier
+          example: "Casualty"
+        - name: X-SourceId
+          in: header
+          required: true
+          schema: { type: string }
+          description: Source system identifier
+          example: "Rx0"
+        - name: X-SourceInfo
+          in: header
+          required: false
+          schema: { type: string }
+          description: Additional source metadata
+          example: "Rx0:RiskClearanceSearch"
+        - name: X-CorrelationId
+          in: header
+          required: false
+          schema: { type: string }
+          description: Source System Correlation ID
+          example: "RC-20260305-778899"
+        - name: X-Risk-Data-Provider
+          in: header
+          required: true
+          schema: { type: string }
+          description: Data provider to search. The system resolves connection details (internal DB or external API) from server-side configuration.
+          example: "GSIDataPlatform"
+        - name: traceparent
+          in: header
+          required: false
+          schema: { type: string }
+          description: HTTP header field defined by the W3C Trace Context specification that identifies a request within a distributed tracing system.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              # RiskClearanceSearch (inline) - Common Domain Model
+              type: object
+              required:
+                - insuredDetails
+                - coverageDetails
+                - searchCriteria
+              properties:
+                insuredDetails:
+                  type: array
+                  description: One or more insured entities to search for. Multiple entries enable searching across related entities (e.g. parent company and subsidiary).
+                  minItems: 1
+                  items:
+                    type: object  # InsuredDetail
+                    properties:
+                      entityName:
+                        type: string
+                        description: Legal name of the insured entity.
+                        example: "CocaCola Inc"
+                      entityType:
+                        type: string
+                        description: Legal form of insured entity.
+                        example: Corporation
+                      stateOfDomicile:
+                        type: string
+                        description: State/Province of domicile for the insured entity.
+                        example: IL
+                      dnbNumber:
+                        type: string
+                        description: "Dun & Bradstreet D-U-N-S number (9 digits) for the insured."
+                        pattern: '^\d{9}$'
+                        example: "123456789"
+                      countryCode:
+                        type: string
+                        description: ISO 3166-1 alpha-2 country code of the insured's domicile.
+                        pattern: '^[A-Z]{2}$'
+                        example: "US"
+                      identifiers:
+                        type: array
+                        description: Typed identifiers for the insured entity.
+                        items:
+                          type: object
+                          properties:
+                            type:
+                              type: string
+                              enum: [DUNS, LEI, CompaniesHouse, Internal]
+                              example: DUNS
+                            value: { type: string, example: "123456789" }
+                          additionalProperties: false
+                      aliases:
+                        type: array
+                        description: Trading names or also-known-as names for the insured.
+                        items: { type: string }
+                        example: ["GTC Logistics", "GTC Tradings"]
+                      addresses:
+                        type: array
+                        items:
+                          type: object  # Address
+                          properties:
+                            type:
+                              type: string
+                              enum: [Primary, Secondary, Billing, Mailing]
+                              example: Primary
+                            addressLine1: { type: string }
+                            addressLine2: { type: string }
+                            city:         { type: string }
+                            region:
+                              type: string
+                              description: State/Province/Region code
+                              example: IL
+                            state:   { type: string, example: IL }
+                            zipCode: { type: string, example: "60061" }
+                            country: { type: string, example: US }
+                            county:  { type: string, example: Cook }
+                          additionalProperties: false
+                      industryCode: { type: string, example: "111120" }
+                      webAddress: { type: string }
+                    additionalProperties: false
+                coverageDetails:
+                  type: object
+                  properties:
+                    lineOfBusiness:    { type: string, example: Insurance }
+                    subLineOfBusiness: { type: string, example: "LiquorLiability" }
+                    classOfBusiness:
+                      type: array
+                      description: One or more classes of business to search within.
+                      items: { type: string }
+                      example: ["PVT"]
+                    insuranceType:
+                      type: string
+                      description: Type of insurance.
+                      example: Insurance
+                  additionalProperties: false
+                searchCriteria:
+                  type: array
+                  description: Each entry specifies a transaction type, the data sources to search, and its associated search settings. Different transaction types may require different data sources, search periods, confidence thresholds, result limits, and status filters.
+                  minItems: 1
+                  items:
+                    type: object  # SearchCriteriaEntry
+                    required:
+                      - transactionType
+                      - dataSources
+                      - confidenceScore
+                      - searchPeriodMonths
+                      - numberOfResults
+                      - statusFilter
+                    properties:
+                      transactionType:
+                        type: string
+                        description: The category of risk record to search for.
+                        enum: [Policy, Quote, Submission, Endorsement, Renewal, Claim]
+                        example: Policy
+                      dataSources:
+                        type: array
+                        description: Specific data sources within the provider to search for this transaction type. These are scoped to the provider specified in X-Risk-Data-Provider header (e.g. S2000, Majesco, Rx0 for GSIDataPlatform; Eclipse, Genius for LloydsMDR).
+                        minItems: 1
+                        items:
+                          type: string
+                        example: ["S2000", "Majesco", "Rx0"]
+                      confidenceScore:
+                        type: integer
+                        description: Minimum confidence threshold (0-100) defined by the source provider. Passed through to the data provider as a filter.
+                        minimum: 0
+                        maximum: 100
+                        example: 50
+                      searchPeriodMonths:
+                        type: integer
+                        description: How many months back to search from the request timestamp.
+                        minimum: 1
+                        maximum: 120
+                        example: 6
+                      numberOfResults:
+                        type: integer
+                        description: Maximum number of results to return for this transaction type.
+                        minimum: 1
+                        maximum: 100
+                        example: 10
+                      statusFilter:
+                        type: array
+                        description: Only return transactions with these statuses.
+                        minItems: 1
+                        items:
+                          type: string
+                          enum: [Bound, Cancelled, Quoted, Referred, Declined, NotTakenUp, Expired, InForce, Received, Cleared, NotCleared, NotReviewed]
+                        example: ["Bound", "Cancelled"]
+                    additionalProperties: false
+              additionalProperties: false
+            examples:
+              singleTransactionType:
+                summary: Single transaction type — Rx0 calling GSIDataPlatform
+                value:
+                  insuredDetails:
+                    - entityName: "CocaCola Inc"
+                      entityType: Corporation
+                      stateOfDomicile: IL
+                      dnbNumber: "123456789"
+                      countryCode: "US"
+                      identifiers:
+                        - type: DUNS
+                          value: "123456789"
+                      aliases: ["GTC Tradings"]
+                      addresses:
+                        - type: Primary
+                          addressLine1: "100 Main Street"
+                          city: "Chicago"
+                          region: "IL"
+                          state: "IL"
+                          zipCode: "60061"
+                          country: "US"
+                          county: "Cook"
+                  coverageDetails:
+                    lineOfBusiness: Insurance
+                    classOfBusiness: ["PVT"]
+                    insuranceType: Insurance
+                  searchCriteria:
+                    - transactionType: Policy
+                      dataSources: ["S2000", "Majesco", "Rx0"]
+                      confidenceScore: 50
+                      searchPeriodMonths: 6
+                      numberOfResults: 10
+                      statusFilter: ["Bound", "Cancelled"]
+              multipleTransactionTypes:
+                summary: Multiple transaction types — BrokerPortal calling LloydsMDR
+                value:
+                  insuredDetails:
+                    - entityName: "Acme Corp"
+                      entityType: Corporation
+                      dnbNumber: "555666777"
+                      countryCode: "GB"
+                      identifiers:
+                        - type: DUNS
+                          value: "555666777"
+                        - type: LEI
+                          value: "5493001KJTIIGC8Y1R12"
+                  coverageDetails:
+                    lineOfBusiness: Insurance
+                    classOfBusiness: ["MarineHull"]
+                  searchCriteria:
+                    - transactionType: Policy
+                      dataSources: ["Eclipse", "Genius"]
+                      confidenceScore: 50
+                      searchPeriodMonths: 6
+                      numberOfResults: 10
+                      statusFilter: ["Bound", "Cancelled"]
+                    - transactionType: Quote
+                      dataSources: ["Eclipse"]
+                      confidenceScore: 60
+                      searchPeriodMonths: 12
+                      numberOfResults: 5
+                      statusFilter: ["Quoted", "Referred"]
+                    - transactionType: Submission
+                      dataSources: ["Eclipse", "Genius"]
+                      confidenceScore: 40
+                      searchPeriodMonths: 3
+                      numberOfResults: 20
+                      statusFilter: ["Received", "Referred", "Declined"]
+      responses:
+        '200':
+          description: Risk records returned successfully
+          content:
+            application/json:
+              schema:
+                # RiskClearanceResponse (inline)
+                type: object
+                required:
+                  - correlationId
+                  - responseTimestamp
+                  - status
+                  - totalCount
+                  - risks
+                properties:
+                  correlationId:
+                    type: string
+                    description: Echoed from X-CorrelationId header for tracing.
+                    example: "RC-20260305-778899"
+                  responseTimestamp:
+                    type: string
+                    format: date-time
+                    description: ISO 8601 timestamp of when the response was generated.
+                    example: "2026-03-05T12:10:30Z"
+                  status:
+                    type: string
+                    description: Overall request status.
+                    enum: [SUCCESS, FAILED, PARTIAL]
+                    example: SUCCESS
+                  totalCount:
+                    type: integer
+                    description: Total number of risk records returned.
+                    minimum: 0
+                    example: 4
+                  errorCode:
+                    type: string
+                    description: Error code if status is FAILED (only present on failure).
+                    nullable: true
+                    enum: [PROVIDER_TIMEOUT, PROVIDER_ERROR, PROVIDER_UNAVAILABLE, AUTHENTICATION_FAILED, QUERY_ERROR]
+                    example: null
+                  errorMessage:
+                    type: string
+                    description: Human-readable error message (only present on failure).
+                    nullable: true
+                    example: null
+                  risks:
+                    type: array
+                    description: Array of risk records. Each risk is a self-contained record from a specific data source within the provider.
+                    items:
+                      type: object  # RiskMatch
+                      properties:
+                        provider:
+                          type: string
+                          description: The provider that returned this risk record. Echoes the X-Risk-Data-Provider header value.
+                          example: "GSIDataPlatform"
+                        dataSource:
+                          type: string
+                          description: The specific data source within the provider that produced this risk record. Corresponds to the dataSources values in the request.
+                          example: "S2000"
+                        transactionType:
+                          type: string
+                          description: The type of risk transaction this match represents.
+                          enum: [Policy, Quote, Submission, Endorsement, Renewal, Claim]
+                          example: Policy
+                        entityName:
+                          type: string
+                          description: Insured entity name as found in the source system. May differ from the entityName in the request due to name variations across sources..
+                          example: "CocaCola"
+                        uniqueId:
+                          type: string
+                          description: Unique identifier of the insured entity in the source system.
+                          example: "123456789"
+                        dbaAka:
+                          type: string
+                          description: Trading name or also-known-as name of the insured.
+                          nullable: true
+                          example: "GTC Tradings"
+                        partyRole:
+                          type: string
+                          description: Role of the matched party.
+                          enum: [Insured, Broker, Reinsurer, Cedant]
+                          example: Insured
+                        insuranceType:
+                          type: string
+                          description: Type of insurance.
+                          example: "Insurance"
+                        lineOfBusiness:
+                          type: string
+                          description: Line of business of the matched transaction.
+                          example: "Insurance"
+                        classOfBusiness:
+                          type: string
+                          description: Class of business of the matched transaction.
+                          example: "PVT"
+                        reference:
+                          type: string
+                          description: Transaction reference number from the source system.
+                          example: "MR-TR-00000010-02"
+                        inceptionDate:
+                          type: string
+                          format: date
+                          description: Inception date of the policy/quote/submission (YYYY-MM-DD).
+                          example: "2026-02-27"
+                        expiryDate:
+                          type: string
+                          format: date
+                          description: Expiry date of the policy/quote/submission (YYYY-MM-DD).
+                          nullable: true
+                          example: "2027-02-26"
+                        status:
+                          type: string
+                          description: Current status of the transaction in the source system.
+                          enum: [Bound, Cancelled, Quoted, Referred, Declined, NotTakenUp, Expired, InForce, Received, Cleared, NotCleared, NotReviewed]
+                          example: Bound
+                        newOrRenewal:
+                          type: string
+                          description: Whether this transaction is new business or a renewal.
+                          enum: [New, Renewal]
+                          example: "New"
+                        renewalDate:
+                          type: string
+                          format: date
+                          description: Renewal date (if applicable).
+                          nullable: true
+                          example: null
+                        isRenewable:
+                          type: boolean
+                          description: Whether the policy is renewable.
+                          example: true
+                        cancelDeclineReason:
+                          type: string
+                          description: Reason for cancellation or decline (if applicable).
+                          nullable: true
+                          example: null
+                        cancelDeclineDate:
+                          type: string
+                          format: date
+                          description: Date of cancellation or decline (if applicable).
+                          nullable: true
+                          example: null
+                        insuredAssetType:
+                          type: string
+                          description: Type of insured asset.
+                          nullable: true
+                          example: "Property"
+                        insuredPropertyType:
+                          type: string
+                          description: Property type classification.
+                          nullable: true
+                          example: "Commercial"
+                        confidenceScore:
+                          type: integer
+                          description: Match confidence score as computed by the provider (0-100).
+                          minimum: 0
+                          maximum: 100
+                          example: 80
+                      additionalProperties: false
+                additionalProperties: false
+              examples:
+                successWithMatches:
+                  summary: Successful response with multiple matches from different sources
+                  value:
+                    correlationId: "RC-20260305-778899"
+                    responseTimestamp: "2026-03-05T12:10:30Z"
+                    status: "SUCCESS"
+                    totalCount: 4
+                    risks:
+                      - provider: "GSIDataPlatform"
+                        dataSource: "S2000"
+                        transactionType: "Policy"
+                        entityName: "CocaCola"
+                        uniqueId: "123456789"
+                        dbaAka: "GTC Tradings"
+                        partyRole: "Insured"
+                        insuranceType: "Insurance"
+                        lineOfBusiness: "Insurance"
+                        classOfBusiness: "PVT"
+                        reference: "MR-TR-00000010-02"
+                        inceptionDate: "2026-02-27"
+                        expiryDate: "2027-02-26"
+                        status: "Bound"
+                        newOrRenewal: "New"
+                        renewalDate: null
+                        isRenewable: true
+                        cancelDeclineReason: null
+                        cancelDeclineDate: null
+                        insuredAssetType: "Property"
+                        insuredPropertyType: "Commercial"
+                        confidenceScore: 80
+                      - provider: "GSIDataPlatform"
+                        dataSource: "Majesco"
+                        transactionType: "Policy"
+                        entityName: "CocaCola International Ltd"
+                        uniqueId: "123456789"
+                        dbaAka: "GTC Tradings"
+                        partyRole: "Insured"
+                        insuranceType: "Insurance"
+                        lineOfBusiness: "Insurance"
+                        classOfBusiness: "PVT"
+                        reference: "MAJ-POL-00234"
+                        inceptionDate: "2025-11-01"
+                        expiryDate: "2026-10-31"
+                        status: "Bound"
+                        newOrRenewal: "Renewal"
+                        renewalDate: "2026-10-31"
+                        isRenewable: true
+                        cancelDeclineReason: null
+                        cancelDeclineDate: null
+                        insuredAssetType: "Liability"
+                        insuredPropertyType: null
+                        confidenceScore: 72
+                successNoMatches:
+                  summary: Successful response with no matches
+                  value:
+                    correlationId: "RC-20260305-778900"
+                    responseTimestamp: "2026-03-05T12:15:00Z"
+                    status: "SUCCESS"
+                    totalCount: 0
+                    risks: []
+                providerFailure:
+                  summary: Provider failure — timeout
+                  value:
+                    correlationId: "RC-20260305-778901"
+                    responseTimestamp: "2026-03-05T12:20:05Z"
+                    status: "FAILED"
+                    totalCount: 0
+                    errorCode: "PROVIDER_TIMEOUT"
+                    errorMessage: "GSIDataPlatform did not respond within 30 seconds"
+                    risks: []
+                partialSuccess:
+                  summary: Partial success — some sources returned, others failed
+                  value:
+                    correlationId: "RC-20260305-778902"
+                    responseTimestamp: "2026-03-05T12:25:10Z"
+                    status: "PARTIAL"
+                    totalCount: 2
+                    errorCode: "PROVIDER_ERROR"
+                    errorMessage: "Majesco source returned an error. S2000 and Rx0 risks included."
+                    risks:
+                      - provider: "GSIDataPlatform"
+                        dataSource: "S2000"
+                        transactionType: "Policy"
+                        entityName: "Tesla Inc"
+                        uniqueId: "111222333"
+                        dbaAka: null
+                        partyRole: "Insured"
+                        insuranceType: "Insurance"
+                        lineOfBusiness: "Insurance"
+                        classOfBusiness: "PVT"
+                        reference: "S2K-POL-99812"
+                        inceptionDate: "2025-06-01"
+                        expiryDate: "2026-06-01"
+                        status: "Bound"
+                        newOrRenewal: "Renewal"
+                        renewalDate: "2026-06-01"
+                        isRenewable: true
+                        cancelDeclineReason: null
+                        cancelDeclineDate: null
+                        insuredAssetType: "Property"
+                        insuredPropertyType: "Industrial"
+                        confidenceScore: 91
+                      - provider: "GSIDataPlatform"
+                        dataSource: "Rx0"
+                        transactionType: "Quote"
+                        entityName: "Tesla Motors Inc"
+                        uniqueId: "111222333"
+                        dbaAka: "Tesla"
+                        partyRole: "Insured"
+                        insuranceType: "Insurance"
+                        lineOfBusiness: "Insurance"
+                        classOfBusiness: "PVT"
+                        reference: "RX0-QTE-44521"
+                        inceptionDate: "2026-01-15"
+                        expiryDate: "2027-01-15"
+                        status: "Quoted"
+                        newOrRenewal: "New"
+                        renewalDate: null
+                        isRenewable: false
+                        cancelDeclineReason: null
+                        cancelDeclineDate: null
+                        insuredAssetType: "Liability"
+                        insuredPropertyType: null
+                        confidenceScore: 68
+        '400':
+          description: Invalid request payload
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - correlationId
+                  - errorCode
+                  - errors
+                properties:
+                  correlationId: { type: string, example: "RC-20260305-778899" }
+                  errorCode:
+                    type: string
+                    enum: [VALIDATION_ERROR]
+                    example: VALIDATION_ERROR
+                  errors:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - field
+                        - message
+                      properties:
+                        field:
+                          type: string
+                          description: Which field caused the error.
+                          example: "insuredDetails"
+                        message:
+                          type: string
+                          description: Human-readable error description.
+                          example: "At least one insured detail is required"
+              example:
+                correlationId: "RC-20260305-778899"
+                errorCode: "VALIDATION_ERROR"
+                errors:
+                  - field: "insuredDetails"
+                    message: "At least one insured detail is required"
+                  - field: "searchCriteria"
+                    message: "At least one search criteria entry is required"
+        '401':
+          description: Missing or invalid JWT token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  correlationId: { type: string }
+                  errorCode: { type: string, enum: [UNAUTHORIZED] }
+                  errors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field: { type: string }
+                        message: { type: string }
+              example:
+                correlationId: "RC-20260305-778899"
+                errorCode: "UNAUTHORIZED"
+                errors:
+                  - field: "Authorization"
+                    message: "Bearer token is missing or expired"
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  correlationId: { type: string }
+                  errorCode: { type: string, enum: [RATE_LIMIT_EXCEEDED] }
+                  errors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field: { type: string }
+                        message: { type: string }
+              example:
+                correlationId: "RC-20260305-778899"
+                errorCode: "RATE_LIMIT_EXCEEDED"
+                errors:
+                  - field: "request"
+                    message: "Rate limit of 100 requests per minute exceeded"
+        '502':
+          description: Provider returned an error or unexpected response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  correlationId: { type: string }
+                  errorCode: { type: string, enum: [PROVIDER_ERROR] }
+                  errors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field: { type: string }
+                        message: { type: string }
+              example:
+                correlationId: "RC-20260305-778899"
+                errorCode: "PROVIDER_ERROR"
+                errors:
+                  - field: "provider"
+                    message: "GSIDataPlatform returned HTTP 500: Internal server error"
+        '504':
+          description: Provider did not respond within configured timeout
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  correlationId: { type: string }
+                  errorCode: { type: string, enum: [PROVIDER_TIMEOUT] }
+                  errors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field: { type: string }
+                        message: { type: string }
+              example:
+                correlationId: "RC-20260305-778899"
+                errorCode: "PROVIDER_TIMEOUT"
+                errors:
+                  - field: "provider"
+                    message: "GSIDataPlatform did not respond within 30 seconds"
